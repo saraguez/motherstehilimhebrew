@@ -278,10 +278,8 @@
                 const file = e.target.files[0];
                 if (!file) return;
 
-                if (file.size > 5 * 1024 * 1024) {
-                    alert("התמונה גדולה מדי. נא לבחור קובץ קטן מ-5MB.");
-                    return;
-                }
+                // REMOVED the initial 5MB check. We let the canvas resize it automatically.
+                // if (file.size > 5 * 1024 * 1024) { ... }
 
                 const reader = new FileReader();
                 reader.onload = (event) => {
@@ -290,6 +288,7 @@
                         const canvas = document.createElement('canvas');
                         const ctx = canvas.getContext('2d');
                         
+                        // Resize to thumbnail size (max 200px)
                         const MAX_SIZE = 200;
                         let width = img.width;
                         let height = img.height;
@@ -303,6 +302,7 @@
                         canvas.width = width;
                         canvas.height = height;
                         ctx.drawImage(img, 0, 0, width, height);
+                        // Compress to JPEG quality 0.8
                         const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
                         setFormData(prev => ({ ...prev, imageUrl: dataUrl }));
                     };
