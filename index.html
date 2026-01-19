@@ -68,7 +68,7 @@
             writeBatch,
             getDocs
         } from 'firebase/firestore';
-        import { HDate } from '@hebcal/core';
+        import { HDate, gematriya } from '@hebcal/core';
 
         // --- EMPTY INITIAL DATA (Generic) ---
         const INITIAL_DATA = [];
@@ -163,8 +163,13 @@
 
                 const now = new Date();
                 const hNow = new HDate(now);
-                // Use HDate render for Hebrew letters
-                setTodayHebrew(hNow.render('he')); 
+                
+                // Construct Hebrew date manually to ensure no vowels and Gematria for day
+                const rawDateStr = hNow.render('he'); 
+                // Regex to remove all Hebrew vowels (Nikkud)
+                const cleanDateStr = rawDateStr.replace(/[\u0591-\u05C7]/g, '');
+                
+                setTodayHebrew(cleanDateStr);
                 setCurrentHebrewDay(hNow.getDate());
 
                 return () => unsubscribe();
