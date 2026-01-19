@@ -114,7 +114,6 @@
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        // Using a generic collection path now
         const appId = 'tehillim-app-v1'; 
 
         // --- MAIN APP COMPONENT ---
@@ -125,7 +124,8 @@
             
             // Data State
             const [children, setChildren] = useState([]);
-            const [completedIds, setCompletedIds] = useState([]); 
+            const [completedIds, setCompletedIds] = useState([]); // For children
+            const [completedDailyIds, setCompletedDailyIds] = useState([]); // For daily chapters
             
             // Navigation & UI
             const [activeTab, setActiveTab] = useState('children');
@@ -163,8 +163,8 @@
 
                 const now = new Date();
                 const hNow = new HDate(now);
-                const monthName = HEBREW_MONTHS.find(m => m.name === hNow.getMonthName())?.label || hNow.getMonthName();
-                setTodayHebrew(`${hNow.getDate()} ב${monthName} ${hNow.getFullYear()}`);
+                // Use HDate render for Hebrew letters
+                setTodayHebrew(hNow.render('he')); 
                 setCurrentHebrewDay(hNow.getDate());
 
                 return () => unsubscribe();
@@ -183,8 +183,14 @@
                 const todayStr = new Date().toDateString();
                 const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
                 const unsubscribeCompleted = onSnapshot(completedRef, (docSnap) => {
-                    if (docSnap.exists()) setCompletedIds(docSnap.data().ids || []);
-                    else setCompletedIds([]);
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        setCompletedIds(data.ids || []);
+                        setCompletedDailyIds(data.dailyIds || []);
+                    } else {
+                        setCompletedIds([]);
+                        setCompletedDailyIds([]);
+                    }
                 });
 
                 return () => { unsubscribeChildren(); unsubscribeCompleted(); };
@@ -228,9 +234,8 @@
             const getDailyChapters = () => {
                 const hNow = new HDate();
                 const day = hNow.getDate();
-                const daysInMonth = hNow.daysInMonth(); // Returns 29 or 30
+                const daysInMonth = hNow.daysInMonth(); 
                 
-                // Helper to get chapters for a specific day cycle
                 const getRange = (d) => {
                     if (!DAILY_CYCLE[d]) return [];
                     const [start, end] = DAILY_CYCLE[d];
@@ -239,16 +244,11 @@
                     return range;
                 };
 
-                // 1. Get today's standard chapters
                 let chapters = getRange(day);
-
-                // 2. CHECK: If today is the 29th AND the month has only 29 days,
-                //    we must also say Day 30 (Psalms 145-150) to finish the book.
                 if (day === 29 && daysInMonth === 29) {
                     const day30Chapters = getRange(30);
                     chapters = [...chapters, ...day30Chapters];
                 }
-
                 return chapters;
             };
 
@@ -278,9 +278,6 @@
                 const file = e.target.files[0];
                 if (!file) return;
 
-                // REMOVED the initial 5MB check. We let the canvas resize it automatically.
-                // if (file.size > 5 * 1024 * 1024) { ... }
-
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     const img = new Image();
@@ -288,7 +285,6 @@
                         const canvas = document.createElement('canvas');
                         const ctx = canvas.getContext('2d');
                         
-                        // Resize to thumbnail size (max 200px)
                         const MAX_SIZE = 200;
                         let width = img.width;
                         let height = img.height;
@@ -302,7 +298,6 @@
                         canvas.width = width;
                         canvas.height = height;
                         ctx.drawImage(img, 0, 0, width, height);
-                        // Compress to JPEG quality 0.8
                         const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
                         setFormData(prev => ({ ...prev, imageUrl: dataUrl }));
                     };
@@ -364,7 +359,7 @@
                 const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
                 const newIds = [...completedIds, childId];
                 setCompletedIds(newIds);
-                await setDoc(completedRef, { ids: newIds, date: todayStr }, { merge: true });
+                await setDoc(completedRef, { ids: newIds }, { merge: true });
             };
 
             const unmarkChildAsDone = async (childId) => {
@@ -373,7 +368,27 @@
                 const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
                 const newIds = completedIds.filter(id => id !== childId);
                 setCompletedIds(newIds);
-                await setDoc(completedRef, { ids: newIds, date: todayStr }, { merge: true });
+                await setDoc(completedRef, { ids: newIds }, { merge: true });
+            };
+
+            // NEW: Mark Daily Chapter
+            const markDailyAsDone = async (chapterNum) => {
+                if (!user) return;
+                const todayStr = new Date().toDateString();
+                const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
+                const newDailyIds = [...completedDailyIds, chapterNum];
+                setCompletedDailyIds(newDailyIds);
+                await setDoc(completedRef, { dailyIds: newDailyIds }, { merge: true });
+            };
+            
+            // NEW: Unmark Daily Chapter
+            const unmarkDailyAsDone = async (chapterNum) => {
+                if (!user) return;
+                const todayStr = new Date().toDateString();
+                const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
+                const newDailyIds = completedDailyIds.filter(id => id !== chapterNum);
+                setCompletedDailyIds(newDailyIds);
+                await setDoc(completedRef, { dailyIds: newDailyIds }, { merge: true });
             };
 
             const handleDownloadBackup = () => {
@@ -412,8 +427,6 @@
                 try {
                     const snapshot = await getDocs(childrenRef);
                     snapshot.forEach(doc => batch.delete(doc.ref));
-                    // Initialize with empty or generic data if desired
-                    // INITIAL_DATA.forEach(child => batch.set(doc(childrenRef), child));
                     await batch.commit(); alert("הרשימה אופסה!");
                 } catch (e) { alert("שגיאה: " + e.message); }
             };
@@ -509,6 +522,19 @@
                             <div className="w-8"></div>
                         </header>
                         <main className="flex-1 p-6 max-w-2xl mx-auto w-full">
+                            {/* BIG CHILD IMAGE AT TOP */}
+                            {readerContext.type === 'child' && readerContext.data.imageUrl && (
+                                <div className="flex justify-center mb-6">
+                                    <div className="w-40 h-40 rounded-full border-4 border-slate-100 shadow-md overflow-hidden bg-slate-50">
+                                        <img 
+                                            src={readerContext.data.imageUrl} 
+                                            className="w-full h-full object-cover" 
+                                            alt={readerContext.data.name} 
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
                             {loadingPsalm ? 
                                 <div className="flex justify-center py-20"><Loader2 className="animate-spin text-slate-400" /></div> : 
                                 psalmText && (
@@ -520,15 +546,22 @@
                                 )
                             }
                         </main>
-                        {readerContext.type === 'child' && (
-                            <div className="sticky bottom-0 bg-white border-t p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-                                <div className="max-w-md mx-auto">
+                        
+                        {/* BOTTOM ACTION BAR */}
+                        <div className="sticky bottom-0 bg-white border-t p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+                            <div className="max-w-md mx-auto">
+                                {readerContext.type === 'child' && (
                                     <button onClick={() => { markChildAsDone(readerContext.id); setView('list'); }} className="w-full bg-green-600 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all">
                                         <CheckCircle size={24} /> סיימתי לקרוא
                                     </button>
-                                </div>
+                                )}
+                                {readerContext.type === 'chapter' && (
+                                    <button onClick={() => { markDailyAsDone(readerContext.chapter); setView('list'); }} className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all">
+                                        <CheckCircle size={24} /> סיימתי פרק זה
+                                    </button>
+                                )}
                             </div>
-                        )}
+                        </div>
                     </div>
                 );
             }
@@ -538,7 +571,8 @@
                 <div className="min-h-screen bg-slate-50 pb-20 font-sans flex flex-col">
                     <div className="bg-white shadow-sm sticky top-0 z-10">
                         <div className="bg-slate-50 py-1 px-4 flex justify-between items-center text-[11px] border-b">
-                            <p className="text-slate-600 font-serif font-bold">{todayHebrew}</p>
+                            {/* HEBREW DATE HERE */}
+                            <p className="text-slate-600 font-serif font-bold text-lg leading-none pt-1">{todayHebrew}</p>
                             <div className="flex items-center gap-2">
                                 <span className="flex items-center gap-1 text-green-600 font-medium"><span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>{user.email}</span>
                                 <button onClick={handleLogout} className="text-slate-400 hover:text-red-500 transition-colors p-1" title="התנתק"><LogOut size={14} /></button>
@@ -684,16 +718,23 @@
                                             <p className="text-blue-600">יום {currentHebrewDay} לחודש</p>
                                         </div>
                                         <div className="grid grid-cols-1 gap-2">
-                                            {getDailyChapters().map(ch => (
-                                                <button 
-                                                    key={ch} 
-                                                    onClick={() => openReader({ type: 'chapter', id: ch, chapter: ch })}
-                                                    className="bg-white border border-slate-200 p-4 rounded-xl flex items-center justify-between hover:bg-slate-50 transition-colors"
-                                                >
-                                                    <span className="font-bold text-slate-700">פרק {ch}</span>
-                                                    <BookOpen size={16} className="text-slate-400" />
-                                                </button>
-                                            ))}
+                                            {getDailyChapters().map(ch => {
+                                                const isDailyDone = completedDailyIds.includes(ch);
+                                                return (
+                                                    <div key={ch} className="flex gap-2">
+                                                        <button 
+                                                            onClick={() => openReader({ type: 'chapter', id: ch, chapter: ch })}
+                                                            className={`flex-1 border p-4 rounded-xl flex items-center justify-between transition-colors ${isDailyDone ? 'bg-green-50 border-green-200' : 'bg-white border-slate-200 hover:bg-slate-50'}`}
+                                                        >
+                                                            <span className={`font-bold ${isDailyDone ? 'text-green-800' : 'text-slate-700'}`}>פרק {ch}</span>
+                                                            <div className="flex items-center gap-2">
+                                                                {isDailyDone ? <span className="text-xs font-bold text-green-600 flex items-center gap-1"><Check size={14} /> נקרא</span> : <BookOpen size={16} className="text-slate-400" />}
+                                                            </div>
+                                                        </button>
+                                                        {isDailyDone && <button onClick={() => unmarkDailyAsDone(ch)} className="px-3 bg-red-50 text-red-500 rounded-xl border border-red-100" title="בטל סימון"><Undo size={16} /></button>}
+                                                    </div>
+                                                );
+                                            })}
                                             {getDailyChapters().length === 0 && <p className="text-center text-slate-400">אין פרקים להיום (או שגיאה בחישוב)</p>}
                                         </div>
                                     </div>
