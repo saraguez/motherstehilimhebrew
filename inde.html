@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>תהילים יומי - המשפחה שלי</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Hebrew:wght@400;500;600;700&family=Noto+Serif+Hebrew:wght@400;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Noto Sans Hebrew', sans-serif; }
+        .font-serif { font-family: 'Noto Serif Hebrew', serif; }
+        .tab-active { border-bottom: 2px solid #2563eb; color: #2563eb; font-weight: bold; }
+        .tab-inactive { color: #64748b; }
+        
+        /* Highlight Animation */
+        @keyframes highlight {
+            0% { background-color: #dbeafe; }
+            100% { background-color: white; }
+        }
+        .highlight-item {
+            animation: highlight 2s ease-out;
+        }
+    </style>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "lucide-react": "https://esm.sh/lucide-react@0.263.1",
+            "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
+            "firebase/auth": "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js",
+            "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js",
+            "@hebcal/core": "https://esm.sh/@hebcal/core@5.4.0"
+        }
+    }
+    </script>
+
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { Settings, Plus, Trash2, Edit2, Save, X, BookOpen, Heart, ArrowRight, Loader2, Check, CheckCircle, RefreshCw, LogIn, Download, LogOut, Grid, Calendar, Users, Undo, Upload, Printer, Camera } from 'lucide-react';
+        import { initializeApp } from 'firebase/app';
+        import { 
+            getAuth, 
+            onAuthStateChanged, 
+            GoogleAuthProvider, 
+            signInWithPopup, 
+            signOut 
+        } from 'firebase/auth';
+        import { 
+            getFirestore, 
+            collection, 
+            doc, 
+            addDoc, 
+            updateDoc, 
+            deleteDoc, 
+            onSnapshot, 
+            setDoc,
+            writeBatch,
+            getDocs
+        } from 'firebase/firestore';
+        import { HDate } from '@hebcal/core';
+
+        // --- EMPTY INITIAL DATA (Generic) ---
+        const INITIAL_DATA = [];
+
+        // --- HEBREW CONSTANTS ---
+        const HEBREW_MONTHS = [
+            { id: 1, name: "Nisan", label: "ניסן" },
+            { id: 2, name: "Iyyar", label: "אייר" },
+            { id: 3, name: "Sivan", label: "סיון" },
+            { id: 4, name: "Tamuz", label: "תמוז" },
+            { id: 5, name: "Av", label: "אב" },
+            { id: 6, name: "Elul", label: "אלול" },
+            { id: 7, name: "Tishrei", label: "תשרי" },
+            { id: 8, name: "Cheshvan", label: "חשון" },
+            { id: 9, name: "Kislev", label: "כסלו" },
+            { id: 10, name: "Tevet", label: "טבת" },
+            { id: 11, name: "Shvat", label: "שבט" },
+            { id: 12, name: "Adar", label: "אדר" }, 
+            { id: 12, name: "Adar I", label: "אדר א׳" }, 
+            { id: 13, name: "Adar II", label: "אדר ב׳" } 
+        ];
+
+        // Monthly Tehillim Cycle Mapping (Day -> Start Chapter, End Chapter)
+        const DAILY_CYCLE = {
+            1: [1, 9], 2: [10, 17], 3: [18, 22], 4: [23, 28], 5: [29, 34],
+            6: [35, 38], 7: [39, 43], 8: [44, 48], 9: [49, 54], 10: [55, 59],
+            11: [60, 65], 12: [66, 68], 13: [69, 71], 14: [72, 76], 15: [77, 78],
+            16: [79, 82], 17: [83, 87], 18: [88, 89], 19: [90, 96], 20: [97, 103],
+            21: [104, 105], 22: [106, 108], 23: [109, 112], 24: [113, 118], 25: [119, 119],
+            26: [120, 134], 27: [135, 139], 28: [140, 144], 29: [145, 150], 30: [145, 150] 
+        };
+
+        // --- FIREBASE CONFIG (INTEGRATED) ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyCuj6W-hGVhFGMvoXPHM1p3RaQ_xR7qU2E",
+            authDomain: "mothers-tehilim-hebrew.firebaseapp.com",
+            projectId: "mothers-tehilim-hebrew",
+            storageBucket: "mothers-tehilim-hebrew.firebasestorage.app",
+            messagingSenderId: "76279052428",
+            appId: "1:76279052428:web:661369ebcbcc6c5567e3a9"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        // Using a generic collection path now
+        const appId = 'tehillim-app-v1'; 
+
+        // --- MAIN APP COMPONENT ---
+        function TehillimApp() {
+            const [user, setUser] = useState(null);
+            const [loadingAuth, setLoadingAuth] = useState(true);
+            const [isExporting, setIsExporting] = useState(false);
+            
+            // Data State
+            const [children, setChildren] = useState([]);
+            const [completedIds, setCompletedIds] = useState([]); 
+            
+            // Navigation & UI
+            const [activeTab, setActiveTab] = useState('children');
+            const [view, setView] = useState('list');
+            const [todayHebrew, setTodayHebrew] = useState("");
+            const [currentHebrewDay, setCurrentHebrewDay] = useState(1);
+            
+            // Reader State
+            const [readerContext, setReaderContext] = useState(null); 
+            const [psalmText, setPsalmText] = useState(null);
+            const [loadingPsalm, setLoadingPsalm] = useState(false);
+            const [scrollToId, setScrollToId] = useState(null);
+
+            // Form State
+            const [editingId, setEditingId] = useState(null);
+            const [formData, setFormData] = useState({ 
+                name: '', 
+                hebrewDate: '', 
+                birthDate: '', 
+                gender: 'girl',
+                imageUrl: ''
+            });
+            const [dateInputMode, setDateInputMode] = useState('gregorian'); 
+            const [hebrewDateParts, setHebrewDateParts] = useState({
+                day: 1, month: 7, year: 5785
+            });
+            const fileInputRef = useRef(null);
+
+            // --- INIT ---
+            useEffect(() => {
+                const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+                    setUser(currentUser);
+                    setLoadingAuth(false);
+                });
+
+                const now = new Date();
+                const hNow = new HDate(now);
+                const monthName = HEBREW_MONTHS.find(m => m.name === hNow.getMonthName())?.label || hNow.getMonthName();
+                setTodayHebrew(`${hNow.getDate()} ב${monthName} ${hNow.getFullYear()}`);
+                setCurrentHebrewDay(hNow.getDate());
+
+                return () => unsubscribe();
+            }, []);
+
+            // --- LISTENERS ---
+            useEffect(() => {
+                if (!user) return;
+
+                const childrenRef = collection(db, 'artifacts', appId, 'users', user.uid, 'children');
+                const unsubscribeChildren = onSnapshot(childrenRef, (snapshot) => {
+                    const kids = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setChildren(kids);
+                });
+
+                const todayStr = new Date().toDateString();
+                const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
+                const unsubscribeCompleted = onSnapshot(completedRef, (docSnap) => {
+                    if (docSnap.exists()) setCompletedIds(docSnap.data().ids || []);
+                    else setCompletedIds([]);
+                });
+
+                return () => { unsubscribeChildren(); unsubscribeCompleted(); };
+            }, [user]);
+
+            useEffect(() => {
+                if (view === 'list' && scrollToId) {
+                    setTimeout(() => {
+                        const element = document.getElementById(scrollToId);
+                        if (element) {
+                            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            element.classList.add('highlight-item');
+                            setTimeout(() => element.classList.remove('highlight-item'), 2000);
+                        }
+                        setScrollToId(null);
+                    }, 150);
+                }
+            }, [view, scrollToId]);
+
+            // --- LOGIC ---
+            const calculateChapter = (birthDateString) => {
+                if (!birthDateString) return 1;
+                try {
+                    const birthDate = new Date(birthDateString);
+                    const birthHDate = new HDate(birthDate);
+                    const todayHDate = new HDate();
+                    let age = todayHDate.getFullYear() - birthHDate.getFullYear();
+                    
+                    const monthOrder = { 7:1, 8:2, 9:3, 10:4, 11:5, 12:6, 13:7, 1:8, 2:9, 3:10, 4:11, 5:12, 6:13 };
+                    const mBirth = monthOrder[birthHDate.getMonth()];
+                    const mToday = monthOrder[todayHDate.getMonth()];
+                    
+                    if (mToday < mBirth) { age--; } 
+                    else if (mToday === mBirth) { if (todayHDate.getDate() < birthHDate.getDate()) { age--; } }
+                    return age + 1;
+                } catch (e) {
+                    return 1;
+                }
+            };
+
+            const getDailyChapters = () => {
+                const hNow = new HDate();
+                const day = hNow.getDate();
+                const daysInMonth = hNow.daysInMonth(); // Returns 29 or 30
+                
+                // Helper to get chapters for a specific day cycle
+                const getRange = (d) => {
+                    if (!DAILY_CYCLE[d]) return [];
+                    const [start, end] = DAILY_CYCLE[d];
+                    const range = [];
+                    for(let i=start; i<=end; i++) range.push(i);
+                    return range;
+                };
+
+                // 1. Get today's standard chapters
+                let chapters = getRange(day);
+
+                // 2. CHECK: If today is the 29th AND the month has only 29 days,
+                //    we must also say Day 30 (Psalms 145-150) to finish the book.
+                if (day === 29 && daysInMonth === 29) {
+                    const day30Chapters = getRange(30);
+                    chapters = [...chapters, ...day30Chapters];
+                }
+
+                return chapters;
+            };
+
+            const handleGoogleLogin = async () => {
+                try {
+                    const provider = new GoogleAuthProvider();
+                    await signInWithPopup(auth, provider);
+                } catch (error) { alert("שגיאה: " + error.message); }
+            };
+
+            const handleLogout = async () => {
+                if (window.confirm("האם להתנתק מהמערכת?")) {
+                    await signOut(auth);
+                    setActiveTab('children');
+                    setView('list');
+                }
+            };
+
+            const cleanText = (text, isHebrew = false) => {
+                if (!text) return "";
+                let cleaned = text.replace(/<[^>]+>/g, '').replace(/&[a-z0-9#]+;/gi, '').replace(/\{[^}]+\}/g, '').replace(/\[[^\]]+\]/g, '').replace(/׀/g, '').trim();
+                if (isHebrew) cleaned = cleaned.replace(/[a-zA-Z]/g, '');
+                return cleaned;
+            };
+
+            const handleImageChange = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                if (file.size > 5 * 1024 * 1024) {
+                    alert("התמונה גדולה מדי. נא לבחור קובץ קטן מ-5MB.");
+                    return;
+                }
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        
+                        const MAX_SIZE = 200;
+                        let width = img.width;
+                        let height = img.height;
+
+                        if (width > height) {
+                            if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; }
+                        } else {
+                            if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; }
+                        }
+
+                        canvas.width = width;
+                        canvas.height = height;
+                        ctx.drawImage(img, 0, 0, width, height);
+                        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                        setFormData(prev => ({ ...prev, imageUrl: dataUrl }));
+                    };
+                    img.src = event.target.result;
+                };
+                reader.readAsDataURL(file);
+            };
+
+            const handleExportPDF = async () => {
+                if (children.length === 0) { alert("אין ילדים ברשימה."); return; }
+                if (!window.confirm("האם לייצר קובץ PDF להדפסה?")) return;
+                setIsExporting(true);
+                try {
+                    const uniqueChapters = [...new Set(children.map(c => calculateChapter(c.birthDate)))];
+                    const textsCache = {};
+                    await Promise.all(uniqueChapters.map(async (chapter) => {
+                        try {
+                            const res = await fetch(`https://www.sefaria.org/api/texts/Psalms.${chapter}?context=0`);
+                            const data = await res.json();
+                            textsCache[chapter] = data.he; 
+                        } catch (e) { textsCache[chapter] = ["(שגיאה בטעינה)"]; }
+                    }));
+
+                    const printWindow = window.open('', '_blank');
+                    if (!printWindow) { alert("נא לאשר חלונות קופצים."); setIsExporting(false); return; }
+
+                    let htmlContent = `<html><head><title>Tehilim</title><style>@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+Hebrew:wght@400;700&display=swap'); body { font-family: 'Noto Serif Hebrew', serif; padding: 40px; direction: rtl; } .child-block { margin-bottom: 40px; break-inside: avoid; border-bottom: 1px dashed #ccc; padding-bottom: 20px; } .header-info { text-align: center; margin-bottom: 15px; } .child-name { font-size: 18px; font-weight: bold; } .hebrew-text { font-size: 24px; line-height: 1.4; text-align: justify; }</style></head><body><div style="text-align: center; margin-bottom: 40px;"><h1 style="font-size: 32px;">קונטרס תהילים</h1><p>אל הנער הזה התפללתי</p></div>`;
+                    const sorted = [...children].sort((a,b) => new Date(b.birthDate) - new Date(a.birthDate));
+                    sorted.forEach(child => {
+                        const chapter = calculateChapter(child.birthDate);
+                        const verses = textsCache[chapter] || [];
+                        htmlContent += `<div class="child-block"><div class="header-info"><div class="child-name">${child.name}</div><div>פרק ${chapter}</div></div><div class="hebrew-text">${verses.map(v => v.replace(/<[^>]+>/g, '')).join(' ')}</div></div>`;
+                    });
+                    htmlContent += `<script>window.onload = function() { window.print(); }<\/script></body></html>`;
+                    printWindow.document.write(htmlContent); printWindow.document.close();
+                } catch (e) { alert("שגיאה: " + e.message); } finally { setIsExporting(false); }
+            };
+
+            const openReader = async (context) => {
+                let domId = '';
+                if (context.type === 'child') domId = `child-${context.id}`;
+                else if (context.type === 'chapter') domId = `chapter-${context.id}`;
+                
+                setScrollToId(domId);
+                setReaderContext(context);
+                setView('reader');
+                setLoadingPsalm(true);
+                setPsalmText(null);
+                try {
+                    const response = await fetch(`https://www.sefaria.org/api/texts/Psalms.${context.chapter}?context=0`);
+                    const data = await response.json();
+                    setPsalmText(data);
+                } catch (error) { console.error("Error", error); alert("שגיאה בטעינת הטקסט"); } finally { setLoadingPsalm(false); }
+            };
+
+            const markChildAsDone = async (childId) => {
+                if (!user) return;
+                const todayStr = new Date().toDateString();
+                const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
+                const newIds = [...completedIds, childId];
+                setCompletedIds(newIds);
+                await setDoc(completedRef, { ids: newIds, date: todayStr }, { merge: true });
+            };
+
+            const unmarkChildAsDone = async (childId) => {
+                if (!user) return;
+                const todayStr = new Date().toDateString();
+                const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
+                const newIds = completedIds.filter(id => id !== childId);
+                setCompletedIds(newIds);
+                await setDoc(completedRef, { ids: newIds, date: todayStr }, { merge: true });
+            };
+
+            const handleDownloadBackup = () => {
+                const jsonString = JSON.stringify(children, null, 2);
+                const blob = new Blob([jsonString], { type: "application/json" });
+                const href = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = href; link.download = `backup_tehillim.json`;
+                document.body.appendChild(link); link.click(); document.body.removeChild(link);
+            };
+
+            const handleRestoreBackup = async (event) => {
+                const file = event.target.files[0];
+                if (!file || !user) return;
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        if (!Array.isArray(data)) throw new Error("פורמט לא תקין");
+                        if (!window.confirm(`האם לשחזר ${data.length} רשומות?`)) return;
+                        const batch = writeBatch(db);
+                        const childrenRef = collection(db, 'artifacts', appId, 'users', user.uid, 'children');
+                        const snapshot = await getDocs(childrenRef);
+                        snapshot.forEach(doc => batch.delete(doc.ref));
+                        data.forEach(child => { const { id, ...childData } = child; batch.set(doc(childrenRef), childData); });
+                        await batch.commit(); alert("שוחזר בהצלחה!");
+                    } catch (error) { alert("שגיאה: " + error.message); }
+                };
+                reader.readAsText(file);
+            };
+
+            const restoreDefaults = async () => {
+                if (!user || !window.confirm("פעולה זו תמחק את הרשימה הקיימת ותטען רשימה ריקה. להמשיך?")) return;
+                const batch = writeBatch(db);
+                const childrenRef = collection(db, 'artifacts', appId, 'users', user.uid, 'children');
+                try {
+                    const snapshot = await getDocs(childrenRef);
+                    snapshot.forEach(doc => batch.delete(doc.ref));
+                    // Initialize with empty or generic data if desired
+                    // INITIAL_DATA.forEach(child => batch.set(doc(childrenRef), child));
+                    await batch.commit(); alert("הרשימה אופסה!");
+                } catch (e) { alert("שגיאה: " + e.message); }
+            };
+
+            const handleSaveChild = async (e) => {
+                e.preventDefault();
+                if (!user) return;
+                let targetId = editingId;
+                try {
+                    if (editingId) await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'children', editingId), formData);
+                    else { const docRef = await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'children'), formData); targetId = docRef.id; }
+                    setEditingId(null); setFormData({ name: '', hebrewDate: '', birthDate: '', gender: 'girl', imageUrl: '' });
+                    setView('list'); setScrollToId(`child-${targetId}`);
+                } catch (error) { alert("שגיאה בשמירה: " + error.message); }
+            };
+
+            const deleteChild = async (id) => {
+                if (window.confirm('האם למחוק?')) await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'children', id));
+            };
+
+            const handleGregorianChange = (e) => {
+                const newDate = e.target.value;
+                setFormData({ ...formData, birthDate: newDate });
+                
+                if (newDate) {
+                    try {
+                        const hDate = new HDate(new Date(newDate));
+                        const monthName = HEBREW_MONTHS.find(m => m.name === hDate.getMonthName())?.label || hDate.getMonthName();
+                        setFormData(prev => ({
+                            ...prev, 
+                            birthDate: newDate,
+                            hebrewDate: `${hDate.getDate()} ${monthName} ${hDate.getFullYear()}`
+                        }));
+                        setHebrewDateParts({
+                            day: hDate.getDate(),
+                            month: hDate.getMonth(), 
+                            year: hDate.getFullYear()
+                        });
+                    } catch (error) { console.error(error); }
+                }
+            };
+
+            const handleHebrewPartsChange = (field, value) => {
+                const newParts = { ...hebrewDateParts, [field]: parseInt(value) };
+                setHebrewDateParts(newParts);
+                
+                try {
+                    const hDate = new HDate(newParts.day, newParts.month, newParts.year);
+                    const gDate = hDate.greg();
+                    const gDateString = gDate.toISOString().split('T')[0];
+                    const monthName = HEBREW_MONTHS.find(m => m.id === newParts.month)?.label || hDate.getMonthName();
+                    
+                    setFormData(prev => ({
+                        ...prev,
+                        birthDate: gDateString,
+                        hebrewDate: `${newParts.day} ${monthName} ${newParts.year}`
+                    }));
+                } catch (error) { console.error("Invalid Hebrew Date", error); }
+            };
+
+            const startEdit = (child) => {
+                setFormData(child);
+                setEditingId(child.id);
+                if (child.birthDate) {
+                    const hDate = new HDate(new Date(child.birthDate));
+                    setHebrewDateParts({
+                        day: hDate.getDate(),
+                        month: hDate.getMonth(),
+                        year: hDate.getFullYear()
+                    });
+                }
+                setView('settings');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            };
+
+            // --- RENDER HELPERS ---
+            if (loadingAuth) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-slate-400" /></div>;
+            if (isExporting) return <div className="min-h-screen flex items-center justify-center bg-black/80 fixed inset-0 z-[100] text-white flex-col gap-4"><Loader2 className="animate-spin" size={48} /><div className="text-center"><p className="text-xl font-bold">מכין את המסמך...</p></div></div>;
+            
+            // LOGIN SCREEN
+            if (!user) return <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4"><div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100 max-w-sm w-full text-center"><h1 className="text-2xl font-bold text-slate-800 font-serif mb-2">אל הנער הזה התפללתי</h1><p className="text-slate-500 mb-8 font-medium">תהילים יומי למשפחה</p><button onClick={handleGoogleLogin} className="w-full bg-blue-600 text-white px-4 py-3 rounded-xl font-medium flex items-center justify-center gap-2 shadow-sm shadow-blue-200"><LogIn size={20} /> התחברות עם Google</button></div></div>;
+
+            // READER VIEW
+            if (view === 'reader' && readerContext) {
+                return (
+                    <div className="min-h-screen bg-white flex flex-col">
+                        <header className="bg-white border-b sticky top-0 z-20 px-4 py-3 flex items-center justify-between shadow-sm">
+                            <button onClick={() => setView('list')} className="flex items-center gap-1 text-slate-600 font-medium"><ArrowRight size={20} /> חזרה</button>
+                            <div className="text-center">
+                                <span className="text-xs font-bold text-blue-600 uppercase">פרק {readerContext.chapter}</span>
+                                <p className="text-sm font-semibold truncate max-w-[200px]">{readerContext.type === 'child' ? readerContext.data.name : 'קריאה'}</p>
+                            </div>
+                            <div className="w-8"></div>
+                        </header>
+                        <main className="flex-1 p-6 max-w-2xl mx-auto w-full">
+                            {loadingPsalm ? 
+                                <div className="flex justify-center py-20"><Loader2 className="animate-spin text-slate-400" /></div> : 
+                                psalmText && (
+                                    <div className="pb-24">
+                                        <div className="text-justify font-serif text-3xl leading-loose text-slate-900 mb-8">
+                                            {psalmText.he.map((v, i) => <span key={i}>{cleanText(v, true)} <span className="text-sm text-slate-400 mx-1 align-top">({i+1})</span></span>)}
+                                        </div>
+                                    </div>
+                                )
+                            }
+                        </main>
+                        {readerContext.type === 'child' && (
+                            <div className="sticky bottom-0 bg-white border-t p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+                                <div className="max-w-md mx-auto">
+                                    <button onClick={() => { markChildAsDone(readerContext.id); setView('list'); }} className="w-full bg-green-600 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all">
+                                        <CheckCircle size={24} /> סיימתי לקרוא
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            }
+
+            // MAIN LIST VIEW
+            return (
+                <div className="min-h-screen bg-slate-50 pb-20 font-sans flex flex-col">
+                    <div className="bg-white shadow-sm sticky top-0 z-10">
+                        <div className="bg-slate-50 py-1 px-4 flex justify-between items-center text-[11px] border-b">
+                            <p className="text-slate-600 font-serif font-bold">{todayHebrew}</p>
+                            <div className="flex items-center gap-2">
+                                <span className="flex items-center gap-1 text-green-600 font-medium"><span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>{user.email}</span>
+                                <button onClick={handleLogout} className="text-slate-400 hover:text-red-500 transition-colors p-1" title="התנתק"><LogOut size={14} /></button>
+                            </div>
+                        </div>
+                        <div className="px-4 py-3 flex justify-between items-center">
+                            <div>
+                                <h1 className="text-xl font-bold text-slate-800 font-serif">אל הנער הזה התפללתי</h1>
+                            </div>
+                            <div className="flex gap-2">
+                                {view === 'list' && activeTab === 'children' && <button onClick={handleDownloadBackup} className="p-2 bg-slate-100 rounded-full text-slate-600"><Download size={18} /></button>}
+                                <button onClick={() => setView(view === 'settings' ? 'list' : 'settings')} className="p-2 bg-slate-100 rounded-full text-slate-600">{view === 'settings' ? <X size={18} /> : <Settings size={18} />}</button>
+                            </div>
+                        </div>
+                        {view !== 'settings' && (
+                            <div className="flex border-b text-sm font-medium">
+                                <button onClick={() => setActiveTab('children')} className={`flex-1 py-3 text-center flex justify-center items-center gap-2 ${activeTab === 'children' ? 'tab-active' : 'tab-inactive'}`}><Users size={16} /> ילדים</button>
+                                <button onClick={() => setActiveTab('daily')} className={`flex-1 py-3 text-center flex justify-center items-center gap-2 ${activeTab === 'daily' ? 'tab-active' : 'tab-inactive'}`}><Calendar size={16} /> יומי</button>
+                                <button onClick={() => setActiveTab('all')} className={`flex-1 py-3 text-center flex justify-center items-center gap-2 ${activeTab === 'all' ? 'tab-active' : 'tab-inactive'}`}><Grid size={16} /> הכל</button>
+                            </div>
+                        )}
+                    </div>
+
+                    <main className="flex-1 p-4 max-w-md mx-auto w-full">
+                        {view === 'settings' ? (
+                            <div className="animate-in fade-in slide-in-from-bottom-4 duration-300 space-y-6">
+                                <div className="bg-white p-5 rounded-xl border shadow-sm">
+                                    <h2 className="font-bold flex items-center gap-2 mb-4 text-slate-800">{editingId ? <Edit2 size={18} /> : <Plus size={18} />} {editingId ? 'עריכת ילד' : 'הוספת ילד'}</h2>
+                                    <form onSubmit={handleSaveChild} className="space-y-4">
+                                        <div className="flex flex-col items-center gap-2 mb-2">
+                                            <div className="w-20 h-20 rounded-full bg-slate-100 border-2 border-dashed border-slate-300 flex items-center justify-center overflow-hidden relative cursor-pointer hover:border-blue-400 transition-colors" onClick={() => fileInputRef.current.click()}>
+                                                {formData.imageUrl ? <img src={formData.imageUrl} className="w-full h-full object-cover" /> : <Camera size={24} className="text-slate-400" />}
+                                            </div>
+                                            <button type="button" onClick={() => fileInputRef.current.click()} className="text-xs text-blue-600 font-medium">הוסף תמונה</button>
+                                            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageChange} />
+                                            {formData.imageUrl && <button type="button" onClick={() => setFormData({...formData, imageUrl: ''})} className="text-xs text-red-500">מחק תמונה</button>}
+                                        </div>
+
+                                        <input required className="w-full p-3 bg-slate-50 border rounded-lg text-sm" placeholder="שם מלא" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                                        <select className="w-full p-3 bg-slate-50 border rounded-lg text-sm" value={formData.gender} onChange={e => setFormData({...formData, gender: e.target.value})}><option value="girl">בת ❤️</option><option value="boy">בן 💙</option></select>
+                                        
+                                        <div className="bg-slate-50 rounded-lg p-1 flex text-sm">
+                                            <button type="button" onClick={() => setDateInputMode('gregorian')} className={`flex-1 py-2 rounded-md transition-all ${dateInputMode === 'gregorian' ? 'bg-white shadow-sm text-blue-600 font-bold' : 'text-slate-500'}`}>תאריך לועזי</button>
+                                            <button type="button" onClick={() => setDateInputMode('hebrew')} className={`flex-1 py-2 rounded-md transition-all ${dateInputMode === 'hebrew' ? 'bg-white shadow-sm text-blue-600 font-bold' : 'text-slate-500'}`}>תאריך עברי</button>
+                                        </div>
+
+                                        {dateInputMode === 'gregorian' ? (
+                                            <div className="space-y-2">
+                                                <label className="text-xs text-slate-500 font-bold uppercase">תאריך לידה</label>
+                                                <input required type="date" className="w-full p-3 bg-white border rounded-lg text-sm" value={formData.birthDate} onChange={handleGregorianChange} />
+                                                <div className="text-xs text-slate-400">תאריך עברי מחושב: {formData.hebrewDate || '...'}</div>
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-2">
+                                                <label className="text-xs text-slate-500 font-bold uppercase">תאריך עברי</label>
+                                                <div className="grid grid-cols-3 gap-2">
+                                                    <select className="p-3 bg-white border rounded-lg text-sm" value={hebrewDateParts.day} onChange={e => handleHebrewPartsChange('day', e.target.value)}>
+                                                        {Array.from({length: 30}, (_, i) => i + 1).map(d => <option key={d} value={d}>{d}</option>)}
+                                                    </select>
+                                                    <select className="p-3 bg-white border rounded-lg text-sm" value={hebrewDateParts.month} onChange={e => handleHebrewPartsChange('month', e.target.value)}>
+                                                        {HEBREW_MONTHS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                                                    </select>
+                                                    <select className="p-3 bg-white border rounded-lg text-sm" value={hebrewDateParts.year} onChange={e => handleHebrewPartsChange('year', e.target.value)}>
+                                                        {Array.from({length: 100}, (_, i) => new HDate().getFullYear() - i).map(y => <option key={y} value={y}>{y}</option>)}
+                                                    </select>
+                                                </div>
+                                                <div className="text-xs text-slate-400">תאריך לועזי: {formData.birthDate || '...'}</div>
+                                            </div>
+                                        )}
+
+                                        <div className="flex gap-2 mt-4">
+                                            {editingId && <button type="button" onClick={() => {setEditingId(null); setFormData({name:'',hebrewDate:'',birthDate:'',gender:'girl', imageUrl: ''})}} className="flex-1 py-3 border rounded-lg text-slate-600 font-medium">ביטול</button>}
+                                            <button type="submit" className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-bold shadow-md shadow-blue-100 flex items-center justify-center gap-2"><Save size={18} /> {editingId ? 'עדכן' : 'שמור'}</button>
+                                        </div>
+                                    </form>
+                                </div>
+                                <div className="bg-white p-5 rounded-xl border shadow-sm space-y-4">
+                                    <h2 className="font-bold text-slate-800 flex items-center gap-2"><Settings size={18} /> ניהול</h2>
+                                    <div className="grid grid-cols-1 gap-3">
+                                        <button onClick={handleExportPDF} className="w-full py-3 bg-slate-800 text-white text-sm font-bold border rounded-xl flex items-center justify-center gap-2 shadow-sm"><Printer size={16} /> ייצוא ל-PDF</button>
+                                        <div className="h-px bg-slate-100 my-2"></div>
+                                        <button type="button" onClick={restoreDefaults} className="w-full py-3 bg-red-50 text-red-600 text-sm font-bold border border-red-100 rounded-xl flex items-center justify-center gap-2"><RefreshCw size={16} /> איפוס רשימה</button>
+                                        <div className="pt-2"><input type="file" id="backup-upload" className="hidden" accept=".json" onChange={handleRestoreBackup} /><button onClick={() => document.getElementById('backup-upload').click()} className="w-full py-3 bg-slate-100 text-slate-600 text-sm font-bold border rounded-xl flex items-center justify-center gap-2"><Upload size={16} /> שחזור מגיבוי</button></div>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <>
+                                {activeTab === 'children' && (
+                                    <div className="space-y-4">
+                                        {children.length === 0 ? (
+                                            <div className="text-center py-10 px-4 bg-white border border-dashed border-slate-300 rounded-xl text-slate-500">
+                                                <p className="mb-2">הרשימה ריקה</p>
+                                                <button onClick={() => setView('settings')} className="text-blue-600 font-bold underline">הוסף ילד ראשון</button>
+                                            </div>
+                                        ) : (
+                                            <div className="text-center text-xs font-bold text-green-600 flex items-center justify-center gap-1 mb-2"><CheckCircle size={10} /> {completedIds.length} / {children.length} הושלמו היום</div>
+                                        )}
+                                        
+                                        {children.sort((a,b) => new Date(b.birthDate) - new Date(a.birthDate)).map(child => {
+                                            const chapter = calculateChapter(child.birthDate);
+                                            const isDone = completedIds.includes(child.id);
+                                            return (
+                                                <div id={`child-${child.id}`} key={child.id} className={`rounded-2xl border overflow-hidden relative p-5 pr-7 transition-all ${isDone ? 'bg-green-50 border-green-200 shadow-none' : 'bg-white border-slate-100 shadow-sm'}`}>
+                                                    <div className={`absolute right-0 top-0 bottom-0 w-1.5 ${child.gender === 'boy' ? 'bg-blue-400' : 'bg-pink-400'}`}></div>
+                                                    <div className="flex justify-between items-start">
+                                                        <div className="flex-1 pl-2">
+                                                            <div className="text-xs text-slate-400 mb-1 flex items-center gap-1 font-semibold tracking-wider">
+                                                                <Heart size={14} className={`inline align-middle ml-1 ${child.gender === 'boy' ? 'text-blue-500 fill-blue-500' : 'text-pink-500 fill-pink-500'}`} />
+                                                                {child.hebrewDate}
+                                                            </div>
+                                                            <h2 className={`text-lg font-bold leading-tight ${isDone ? 'text-green-800' : 'text-slate-800'}`}>{child.name}</h2>
+                                                        </div>
+                                                        <div className="flex items-center gap-3">
+                                                            {child.imageUrl && (
+                                                                <div className="w-16 h-16 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden shrink-0 shadow-sm">
+                                                                    <img src={child.imageUrl} className="w-full h-full object-cover" />
+                                                                </div>
+                                                            )}
+                                                            <div className={`flex flex-col items-center justify-center p-2 rounded-xl border min-w-[60px] ${isDone ? 'bg-green-100 border-green-200' : 'bg-slate-50 border-slate-100'}`}>
+                                                                <span className="text-[10px] text-slate-400">פרק</span>
+                                                                <span className="text-2xl font-bold">{chapter}</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex gap-2 mt-4">
+                                                        <div className="flex-1 flex gap-2">
+                                                            <button onClick={() => openReader({ type: 'child', id: child.id, chapter, data: child })} className={`flex-1 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 ${isDone ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-700'}`}>{isDone ? <RefreshCw size={14} /> : <BookOpen size={14} />} {isDone ? 'קרא שוב' : 'קרא'}</button>
+                                                            {isDone && <button onClick={() => unmarkChildAsDone(child.id)} className="px-3 bg-red-50 text-red-500 rounded-lg border border-red-100 hover:bg-red-100" title="בטל סימון"><Undo size={16} /></button>}
+                                                        </div>
+                                                        <div className="flex gap-1"><button onClick={() => startEdit(child)} className="p-2 bg-white border rounded-lg text-slate-400 hover:text-blue-600"><Edit2 size={16} /></button><button onClick={() => deleteChild(child.id)} className="p-2 bg-white border rounded-lg text-slate-400 hover:text-red-500"><Trash2 size={16} /></button></div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                                
+                                {activeTab === 'daily' && (
+                                    <div className="space-y-4">
+                                        <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl text-center">
+                                            <h3 className="text-blue-900 font-bold text-lg mb-1">תהילים יומי לחודש</h3>
+                                            <p className="text-blue-600">יום {currentHebrewDay} לחודש</p>
+                                        </div>
+                                        <div className="grid grid-cols-1 gap-2">
+                                            {getDailyChapters().map(ch => (
+                                                <button 
+                                                    key={ch} 
+                                                    onClick={() => openReader({ type: 'chapter', id: ch, chapter: ch })}
+                                                    className="bg-white border border-slate-200 p-4 rounded-xl flex items-center justify-between hover:bg-slate-50 transition-colors"
+                                                >
+                                                    <span className="font-bold text-slate-700">פרק {ch}</span>
+                                                    <BookOpen size={16} className="text-slate-400" />
+                                                </button>
+                                            ))}
+                                            {getDailyChapters().length === 0 && <p className="text-center text-slate-400">אין פרקים להיום (או שגיאה בחישוב)</p>}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {activeTab === 'all' && (
+                                    <div className="grid grid-cols-5 gap-2" dir="ltr">
+                                        {Array.from({ length: 150 }, (_, i) => i + 1).map(num => (
+                                            <button id={`chapter-${num}`} key={num} onClick={() => openReader({ type: 'chapter', id: num, chapter: num })} className="aspect-square bg-white border border-slate-200 rounded-xl flex items-center justify-center font-bold text-slate-700 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600 transition-colors shadow-sm">{num}</button>
+                                        ))}
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </main>
+                </div>
+            );
+        }
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<TehillimApp />);
+    </script>
+</body>
+</html>
