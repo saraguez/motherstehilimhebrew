@@ -23,6 +23,18 @@
         .highlight-item {
             animation: highlight 2s ease-out;
         }
+        
+        @keyframes pulse-fire {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+        }
+        .fire-active {
+            color: #f97316; /* Orange-500 */
+            filter: drop-shadow(0 0 2px rgba(249, 115, 22, 0.5));
+        }
+        .fire-animate {
+            animation: pulse-fire 0.5s ease-in-out;
+        }
     </style>
 
     <script type="importmap">
@@ -47,7 +59,7 @@
     <script type="text/babel" data-type="module">
         import React, { useState, useEffect, useRef } from 'react';
         import { createRoot } from 'react-dom/client';
-        import { Settings, Plus, Trash2, Edit2, Save, X, BookOpen, Heart, ArrowRight, Loader2, Check, CheckCircle, RefreshCw, LogIn, Download, LogOut, Grid, Calendar, Users, Undo, Upload, Printer, Camera } from 'lucide-react';
+        import { Settings, Plus, Trash2, Edit2, Save, X, BookOpen, Heart, ArrowRight, Loader2, Check, CheckCircle, RefreshCw, LogIn, Download, LogOut, Grid, Calendar, Users, Undo, Upload, Printer, Camera, Flame } from 'lucide-react';
         import { initializeApp } from 'firebase/app';
         import { 
             getAuth, 
@@ -65,10 +77,10 @@
             deleteDoc, 
             onSnapshot, 
             setDoc,
+            getDoc,
             writeBatch,
             getDocs
         } from 'firebase/firestore';
-        // IMPORT GEMATRIYA HERE
         import { HDate, gematriya } from '@hebcal/core';
 
         // --- EMPTY INITIAL DATA (Generic) ---
@@ -92,7 +104,6 @@
             { id: 13, name: "Adar II", label: "אדר ב׳" } 
         ];
 
-        // Monthly Tehillim Cycle Mapping (Day -> Start Chapter, End Chapter)
         const DAILY_CYCLE = {
             1: [1, 9], 2: [10, 17], 3: [18, 22], 4: [23, 28], 5: [29, 34],
             6: [35, 38], 7: [39, 43], 8: [44, 48], 9: [49, 54], 10: [55, 59],
@@ -125,9 +136,14 @@
             
             // Data State
             const [children, setChildren] = useState([]);
-            const [completedIds, setCompletedIds] = useState([]); // For children
-            const [completedDailyIds, setCompletedDailyIds] = useState([]); // For daily chapters
+            const [completedIds, setCompletedIds] = useState([]); 
+            const [completedDailyIds, setCompletedDailyIds] = useState([]); 
             
+            // Streak State
+            const [streak, setStreak] = useState(0);
+            const [streakToday, setStreakToday] = useState(false);
+            const [showShabbatModal, setShowShabbatModal] = useState(false);
+
             // Navigation & UI
             const [activeTab, setActiveTab] = useState('children');
             const [view, setView] = useState('list');
@@ -165,10 +181,8 @@
                 const now = new Date();
                 const hNow = new HDate(now);
                 
-                // --- CUSTOM DATE FORMATTING ---
-                // Construct: DayLetter + MonthName + YearLetter (e.g., ב׳ שבט תשפ״ו)
                 const dayStr = gematriya(hNow.getDate());
-                const monthStr = hNow.getMonthName('he'); // Returns pure Hebrew month (e.g. שבט)
+                const monthStr = hNow.getMonthName('he');
                 const yearStr = gematriya(hNow.getFullYear());
                 const formattedDate = `${dayStr} ${monthStr} ${yearStr}`;
                 
@@ -201,22 +215,43 @@
                     }
                 });
 
-                return () => { unsubscribeChildren(); unsubscribeCompleted(); };
-            }, [user]);
+                // --- STREAK & SHABBAT CHECK ---
+                const statsRef = doc(db, 'artifacts', appId, 'users', user.uid, 'stats', 'main');
+                const unsubscribeStats = onSnapshot(statsRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        setStreak(data.currentStreak || 0);
+                        const todayLocal = new Date().toLocaleDateString('en-CA');
+                        setStreakToday(data.lastReadDate === todayLocal);
 
-            useEffect(() => {
-                if (view === 'list' && scrollToId) {
-                    setTimeout(() => {
-                        const element = document.getElementById(scrollToId);
-                        if (element) {
-                            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            element.classList.add('highlight-item');
-                            setTimeout(() => element.classList.remove('highlight-item'), 2000);
+                        // SHABBAT CHECK LOGIC
+                        if (data.lastReadDate) {
+                            const last = new Date(data.lastReadDate);
+                            const today = new Date();
+                            const isSunday = today.getDay() === 0; // 0 = Sunday
+                            
+                            // Check if last read was Friday (roughly 2 days ago)
+                            const diffTime = Math.abs(today - last);
+                            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+
+                            // If it's Sunday, and we last read on Friday (2 days ago), and we haven't asked yet today
+                            // We check "streakToday" to make sure we don't ask if they already finished today.
+                            if (isSunday && diffDays === 2 && data.lastReadDate !== todayLocal) {
+                                setShowShabbatModal(true);
+                            }
                         }
-                        setScrollToId(null);
-                    }, 150);
-                }
-            }, [view, scrollToId]);
+                    } else {
+                        setStreak(0);
+                        setStreakToday(false);
+                    }
+                });
+
+                return () => { 
+                    unsubscribeChildren(); 
+                    unsubscribeCompleted(); 
+                    unsubscribeStats();
+                };
+            }, [user]);
 
             // --- LOGIC ---
             const calculateChapter = (birthDateString) => {
@@ -260,6 +295,114 @@
                 return chapters;
             };
 
+            // --- STREAK UPDATE LOGIC ---
+            const updateStreak = async () => {
+                if (!user) return;
+                const statsRef = doc(db, 'artifacts', appId, 'users', user.uid, 'stats', 'main');
+                const todayLocal = new Date().toLocaleDateString('en-CA'); 
+                
+                try {
+                    const snap = await getDoc(statsRef);
+                    let newStreak = 1;
+                    
+                    if (snap.exists()) {
+                        const data = snap.data();
+                        const lastReadDate = data.lastReadDate;
+                        const currentStreak = data.currentStreak || 0;
+
+                        if (lastReadDate === todayLocal) return; // Already counted today
+
+                        const d1 = new Date(todayLocal);
+                        const d2 = new Date(lastReadDate);
+                        const diffTime = Math.abs(d1 - d2);
+                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                        // Standard Check: Consecutive days
+                        if (diffDays === 1) {
+                            newStreak = currentStreak + 1;
+                        } else {
+                            newStreak = 1; // Reset
+                        }
+                    }
+
+                    await setDoc(statsRef, {
+                        currentStreak: newStreak,
+                        lastReadDate: todayLocal
+                    }, { merge: true });
+                    
+                } catch (e) { console.error("Streak error:", e); }
+            };
+
+            const handleShabbatAnswer = async (didRead) => {
+                setShowShabbatModal(false);
+                if (didRead && user) {
+                    // User says they read on Shabbat.
+                    // We retroactively update "lastReadDate" to Saturday (Yesterday)
+                    // and increment the streak by 1 (for Shabbat).
+                    const statsRef = doc(db, 'artifacts', appId, 'users', user.uid, 'stats', 'main');
+                    
+                    const saturday = new Date();
+                    saturday.setDate(saturday.getDate() - 1); // Yesterday
+                    const satStr = saturday.toLocaleDateString('en-CA');
+
+                    // If they read Friday, streak is X. 
+                    // We make it X+1 and set date to Sat.
+                    // Then, when they read today (Sunday), it will see Sat -> Sun and make it X+2.
+                    await setDoc(statsRef, {
+                        currentStreak: streak + 1,
+                        lastReadDate: satStr
+                    }, { merge: true });
+                }
+            };
+
+            const markChildAsDone = async (childId) => {
+                if (!user) return;
+                const todayStr = new Date().toDateString();
+                const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
+                const newIds = [...completedIds, childId];
+                setCompletedIds(newIds);
+                await setDoc(completedRef, { ids: newIds }, { merge: true });
+                await updateStreak(); 
+            };
+
+            const unmarkChildAsDone = async (childId) => {
+                if (!user) return;
+                const todayStr = new Date().toDateString();
+                const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
+                const newIds = completedIds.filter(id => id !== childId);
+                setCompletedIds(newIds);
+                await setDoc(completedRef, { ids: newIds }, { merge: true });
+            };
+
+            const markDailyAsDone = async (chapterNum) => {
+                if (!user) return;
+                const todayStr = new Date().toDateString();
+                const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
+                const newDailyIds = [...completedDailyIds, chapterNum];
+                setCompletedDailyIds(newDailyIds);
+                await setDoc(completedRef, { dailyIds: newDailyIds }, { merge: true });
+                await updateStreak(); 
+            };
+            
+            const unmarkDailyAsDone = async (chapterNum) => {
+                if (!user) return;
+                const todayStr = new Date().toDateString();
+                const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
+                const newDailyIds = completedDailyIds.filter(id => id !== chapterNum);
+                setCompletedDailyIds(newDailyIds);
+                await setDoc(completedRef, { dailyIds: newDailyIds }, { merge: true });
+            };
+
+            const toggleDailyDone = async (chapterNum) => {
+                if (!user) return;
+                if (completedDailyIds.includes(chapterNum)) {
+                    await unmarkDailyAsDone(chapterNum);
+                } else {
+                    await markDailyAsDone(chapterNum);
+                }
+            };
+
+            // ... (Rest of handlers same as before) ...
             const handleGoogleLogin = async () => {
                 try {
                     const provider = new GoogleAuthProvider();
@@ -285,24 +428,16 @@
             const handleImageChange = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
-
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     const img = new Image();
                     img.onload = () => {
                         const canvas = document.createElement('canvas');
                         const ctx = canvas.getContext('2d');
-                        
                         const MAX_SIZE = 200;
                         let width = img.width;
                         let height = img.height;
-
-                        if (width > height) {
-                            if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; }
-                        } else {
-                            if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; }
-                        }
-
+                        if (width > height) { if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; } } else { if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; } }
                         canvas.width = width;
                         canvas.height = height;
                         ctx.drawImage(img, 0, 0, width, height);
@@ -328,10 +463,8 @@
                             textsCache[chapter] = data.he; 
                         } catch (e) { textsCache[chapter] = ["(שגיאה בטעינה)"]; }
                     }));
-
                     const printWindow = window.open('', '_blank');
                     if (!printWindow) { alert("נא לאשר חלונות קופצים."); setIsExporting(false); return; }
-
                     let htmlContent = `<html><head><title>Tehilim</title><style>@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+Hebrew:wght@400;700&display=swap'); body { font-family: 'Noto Serif Hebrew', serif; padding: 40px; direction: rtl; } .child-block { margin-bottom: 40px; break-inside: avoid; border-bottom: 1px dashed #ccc; padding-bottom: 20px; } .header-info { text-align: center; margin-bottom: 15px; } .child-name { font-size: 18px; font-weight: bold; } .hebrew-text { font-size: 24px; line-height: 1.4; text-align: justify; }</style></head><body><div style="text-align: center; margin-bottom: 40px;"><h1 style="font-size: 32px;">קונטרס תהילים</h1><p>אל הנער הזה התפללתי</p></div>`;
                     const sorted = [...children].sort((a,b) => new Date(b.birthDate) - new Date(a.birthDate));
                     sorted.forEach(child => {
@@ -348,7 +481,6 @@
                 let domId = '';
                 if (context.type === 'child') domId = `child-${context.id}`;
                 else if (context.type === 'chapter') domId = `chapter-${context.id}`;
-                
                 setScrollToId(domId);
                 setReaderContext(context);
                 setView('reader');
@@ -359,60 +491,6 @@
                     const data = await response.json();
                     setPsalmText(data);
                 } catch (error) { console.error("Error", error); alert("שגיאה בטעינת הטקסט"); } finally { setLoadingPsalm(false); }
-            };
-
-            const markChildAsDone = async (childId) => {
-                if (!user) return;
-                const todayStr = new Date().toDateString();
-                const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
-                const newIds = [...completedIds, childId];
-                setCompletedIds(newIds);
-                await setDoc(completedRef, { ids: newIds }, { merge: true });
-            };
-
-            const unmarkChildAsDone = async (childId) => {
-                if (!user) return;
-                const todayStr = new Date().toDateString();
-                const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
-                const newIds = completedIds.filter(id => id !== childId);
-                setCompletedIds(newIds);
-                await setDoc(completedRef, { ids: newIds }, { merge: true });
-            };
-
-            // NEW: Mark Daily Chapter
-            const markDailyAsDone = async (chapterNum) => {
-                if (!user) return;
-                const todayStr = new Date().toDateString();
-                const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
-                const newDailyIds = [...completedDailyIds, chapterNum];
-                setCompletedDailyIds(newDailyIds);
-                await setDoc(completedRef, { dailyIds: newDailyIds }, { merge: true });
-            };
-            
-            // NEW: Unmark Daily Chapter
-            const unmarkDailyAsDone = async (chapterNum) => {
-                if (!user) return;
-                const todayStr = new Date().toDateString();
-                const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
-                const newDailyIds = completedDailyIds.filter(id => id !== chapterNum);
-                setCompletedDailyIds(newDailyIds);
-                await setDoc(completedRef, { dailyIds: newDailyIds }, { merge: true });
-            };
-
-            const toggleDailyDone = async (chapterNum) => {
-                if (!user) return;
-                const todayStr = new Date().toDateString();
-                const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
-                
-                let newDailyIds;
-                if (completedDailyIds.includes(chapterNum)) {
-                    newDailyIds = completedDailyIds.filter(id => id !== chapterNum);
-                } else {
-                    newDailyIds = [...completedDailyIds, chapterNum];
-                }
-                
-                setCompletedDailyIds(newDailyIds);
-                await setDoc(completedRef, { dailyIds: newDailyIds }, { merge: true });
             };
 
             const handleDownloadBackup = () => {
@@ -474,7 +552,6 @@
             const handleGregorianChange = (e) => {
                 const newDate = e.target.value;
                 setFormData({ ...formData, birthDate: newDate });
-                
                 if (newDate) {
                     try {
                         const hDate = new HDate(new Date(newDate));
@@ -484,11 +561,7 @@
                             birthDate: newDate,
                             hebrewDate: `${hDate.getDate()} ${monthName} ${hDate.getFullYear()}`
                         }));
-                        setHebrewDateParts({
-                            day: hDate.getDate(),
-                            month: hDate.getMonth(), 
-                            year: hDate.getFullYear()
-                        });
+                        setHebrewDateParts({ day: hDate.getDate(), month: hDate.getMonth(), year: hDate.getFullYear() });
                     } catch (error) { console.error(error); }
                 }
             };
@@ -496,18 +569,12 @@
             const handleHebrewPartsChange = (field, value) => {
                 const newParts = { ...hebrewDateParts, [field]: parseInt(value) };
                 setHebrewDateParts(newParts);
-                
                 try {
                     const hDate = new HDate(newParts.day, newParts.month, newParts.year);
                     const gDate = hDate.greg();
                     const gDateString = gDate.toISOString().split('T')[0];
                     const monthName = HEBREW_MONTHS.find(m => m.id === newParts.month)?.label || hDate.getMonthName();
-                    
-                    setFormData(prev => ({
-                        ...prev,
-                        birthDate: gDateString,
-                        hebrewDate: `${newParts.day} ${monthName} ${newParts.year}`
-                    }));
+                    setFormData(prev => ({ ...prev, birthDate: gDateString, hebrewDate: `${newParts.day} ${monthName} ${newParts.year}` }));
                 } catch (error) { console.error("Invalid Hebrew Date", error); }
             };
 
@@ -516,11 +583,7 @@
                 setEditingId(child.id);
                 if (child.birthDate) {
                     const hDate = new HDate(new Date(child.birthDate));
-                    setHebrewDateParts({
-                        day: hDate.getDate(),
-                        month: hDate.getMonth(),
-                        year: hDate.getFullYear()
-                    });
+                    setHebrewDateParts({ day: hDate.getDate(), month: hDate.getMonth(), year: hDate.getFullYear() });
                 }
                 setView('settings');
                 window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -546,19 +609,13 @@
                             <div className="w-8"></div>
                         </header>
                         <main className="flex-1 p-6 max-w-2xl mx-auto w-full">
-                            {/* BIG CHILD IMAGE AT TOP */}
                             {readerContext.type === 'child' && readerContext.data.imageUrl && (
                                 <div className="flex justify-center mb-6">
                                     <div className="w-40 h-40 rounded-full border-4 border-slate-100 shadow-md overflow-hidden bg-slate-50">
-                                        <img 
-                                            src={readerContext.data.imageUrl} 
-                                            className="w-full h-full object-cover" 
-                                            alt={readerContext.data.name} 
-                                        />
+                                        <img src={readerContext.data.imageUrl} className="w-full h-full object-cover" alt={readerContext.data.name} />
                                     </div>
                                 </div>
                             )}
-
                             {loadingPsalm ? 
                                 <div className="flex justify-center py-20"><Loader2 className="animate-spin text-slate-400" /></div> : 
                                 psalmText && (
@@ -570,8 +627,6 @@
                                 )
                             }
                         </main>
-                        
-                        {/* BOTTOM ACTION BAR */}
                         <div className="sticky bottom-0 bg-white border-t p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
                             <div className="max-w-md mx-auto">
                                 {readerContext.type === 'child' && (
@@ -592,11 +647,30 @@
 
             // MAIN LIST VIEW
             return (
-                <div className="min-h-screen bg-slate-50 pb-20 font-sans flex flex-col">
+                <div className="min-h-screen bg-slate-50 pb-20 font-sans flex flex-col relative">
+                    {/* SHABBAT MODAL */}
+                    {showShabbatModal && (
+                        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+                            <div className="bg-white rounded-2xl p-6 w-full max-w-sm text-center shadow-2xl animate-in zoom-in-95 duration-200">
+                                <h3 className="text-xl font-bold text-slate-800 mb-2">שבוע טוב!</h3>
+                                <p className="text-slate-600 mb-6">האם קראת תהילים בשבת?</p>
+                                <div className="flex gap-3">
+                                    <button onClick={() => handleShabbatAnswer(false)} className="flex-1 py-3 border border-slate-200 rounded-xl font-bold text-slate-600">לא</button>
+                                    <button onClick={() => handleShabbatAnswer(true)} className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold shadow-lg shadow-blue-200">כן, קראתי</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     <div className="bg-white shadow-sm sticky top-0 z-10">
                         <div className="bg-slate-50 py-1 px-4 flex justify-between items-center text-[11px] border-b">
-                            {/* HEBREW DATE HERE */}
-                            <p className="text-slate-600 font-serif font-bold text-lg leading-none pt-1">{todayHebrew}</p>
+                            <div className="flex items-center gap-3">
+                                <p className="text-slate-600 font-serif font-bold text-lg leading-none pt-1">{todayHebrew}</p>
+                                <div className={`flex items-center gap-1 font-bold ${streakToday ? 'fire-active fire-animate' : 'text-slate-300'}`}>
+                                    <Flame size={16} className={streakToday ? 'fill-orange-500' : 'fill-slate-200'} />
+                                    <span>{streak}</span>
+                                </div>
+                            </div>
                             <div className="flex items-center gap-2">
                                 <span className="flex items-center gap-1 text-green-600 font-medium"><span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>{user.email}</span>
                                 <button onClick={handleLogout} className="text-slate-400 hover:text-red-500 transition-colors p-1" title="התנתק"><LogOut size={14} /></button>
