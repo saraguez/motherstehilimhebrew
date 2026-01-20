@@ -68,7 +68,8 @@
             writeBatch,
             getDocs
         } from 'firebase/firestore';
-        import { HDate } from '@hebcal/core';
+        // IMPORT GEMATRIYA HERE
+        import { HDate, gematriya } from '@hebcal/core';
 
         // --- EMPTY INITIAL DATA (Generic) ---
         const INITIAL_DATA = [];
@@ -164,12 +165,14 @@
                 const now = new Date();
                 const hNow = new HDate(now);
                 
-                // Construct Hebrew date manually to ensure no vowels and Gematria for day
-                const rawDateStr = hNow.render('he'); 
-                // Regex to remove all Hebrew vowels (Nikkud)
-                const cleanDateStr = rawDateStr.replace(/[\u0591-\u05C7]/g, '');
+                // --- CUSTOM DATE FORMATTING ---
+                // Construct: DayLetter + MonthName + YearLetter (e.g., ב׳ שבט תשפ״ו)
+                const dayStr = gematriya(hNow.getDate());
+                const monthStr = hNow.getMonthName('he'); // Returns pure Hebrew month (e.g. שבט)
+                const yearStr = gematriya(hNow.getFullYear());
+                const formattedDate = `${dayStr} ${monthStr} ${yearStr}`;
                 
-                setTodayHebrew(cleanDateStr);
+                setTodayHebrew(formattedDate);
                 setCurrentHebrewDay(hNow.getDate());
 
                 return () => unsubscribe();
@@ -377,6 +380,25 @@
             };
 
             // NEW: Mark Daily Chapter
+            const markDailyAsDone = async (chapterNum) => {
+                if (!user) return;
+                const todayStr = new Date().toDateString();
+                const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
+                const newDailyIds = [...completedDailyIds, chapterNum];
+                setCompletedDailyIds(newDailyIds);
+                await setDoc(completedRef, { dailyIds: newDailyIds }, { merge: true });
+            };
+            
+            // NEW: Unmark Daily Chapter
+            const unmarkDailyAsDone = async (chapterNum) => {
+                if (!user) return;
+                const todayStr = new Date().toDateString();
+                const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
+                const newDailyIds = completedDailyIds.filter(id => id !== chapterNum);
+                setCompletedDailyIds(newDailyIds);
+                await setDoc(completedRef, { dailyIds: newDailyIds }, { merge: true });
+            };
+
             const toggleDailyDone = async (chapterNum) => {
                 if (!user) return;
                 const todayStr = new Date().toDateString();
@@ -558,7 +580,7 @@
                                     </button>
                                 )}
                                 {readerContext.type === 'chapter' && (
-                                    <button onClick={() => { toggleDailyDone(readerContext.chapter); setView('list'); }} className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all">
+                                    <button onClick={() => { markDailyAsDone(readerContext.chapter); setView('list'); }} className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all">
                                         <CheckCircle size={24} /> סיימתי פרק זה
                                     </button>
                                 )}
@@ -717,7 +739,7 @@
                                     <div className="space-y-4">
                                         <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl text-center">
                                             <h3 className="text-blue-900 font-bold text-lg mb-1">תהילים יומי לחודש</h3>
-                                            <p className="text-blue-600">יום {currentHebrewDay} לחודש</p>
+                                            <p className="text-blue-600">יום {gematriya(currentHebrewDay)} לחודש</p>
                                         </div>
                                         <div className="grid grid-cols-1 gap-2">
                                             {getDailyChapters().map(ch => {
