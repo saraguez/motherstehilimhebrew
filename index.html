@@ -181,9 +181,19 @@
                 const now = new Date();
                 const hNow = new HDate(now);
                 
+                // Construct Hebrew date manually with explicit month mapping
                 const dayStr = gematriya(hNow.getDate());
-                const monthStr = hNow.getMonthName('he');
+                const engMonth = hNow.getMonthName();
                 const yearStr = gematriya(hNow.getFullYear());
+                
+                // Manual Dictionary to fix "Sh'vat" -> "שבט"
+                const monthMapping = {
+                    "Nisan": "ניסן", "Iyyar": "אייר", "Sivan": "סיון", "Tamuz": "תמוז", "Av": "אב", "Elul": "אלול",
+                    "Tishrei": "תשרי", "Cheshvan": "חשון", "Kislev": "כסלו", "Tevet": "טבת", "Sh'vat": "שבט", "Shvat": "שבט",
+                    "Adar": "אדר", "Adar I": "אדר א׳", "Adar II": "אדר ב׳"
+                };
+                
+                const monthStr = monthMapping[engMonth] || engMonth; // Fallback to Eng if missing
                 const formattedDate = `${dayStr} ${monthStr} ${yearStr}`;
                 
                 setTodayHebrew(formattedDate);
@@ -235,7 +245,6 @@
                             const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
 
                             // If it's Sunday, and we last read on Friday (2 days ago), and we haven't asked yet today
-                            // We check "streakToday" to make sure we don't ask if they already finished today.
                             if (isSunday && diffDays === 2 && data.lastReadDate !== todayLocal) {
                                 setShowShabbatModal(true);
                             }
@@ -345,9 +354,6 @@
                     saturday.setDate(saturday.getDate() - 1); // Yesterday
                     const satStr = saturday.toLocaleDateString('en-CA');
 
-                    // If they read Friday, streak is X. 
-                    // We make it X+1 and set date to Sat.
-                    // Then, when they read today (Sunday), it will see Sat -> Sun and make it X+2.
                     await setDoc(statsRef, {
                         currentStreak: streak + 1,
                         lastReadDate: satStr
@@ -609,13 +615,19 @@
                             <div className="w-8"></div>
                         </header>
                         <main className="flex-1 p-6 max-w-2xl mx-auto w-full">
+                            {/* BIG CHILD IMAGE AT TOP */}
                             {readerContext.type === 'child' && readerContext.data.imageUrl && (
                                 <div className="flex justify-center mb-6">
                                     <div className="w-40 h-40 rounded-full border-4 border-slate-100 shadow-md overflow-hidden bg-slate-50">
-                                        <img src={readerContext.data.imageUrl} className="w-full h-full object-cover" alt={readerContext.data.name} />
+                                        <img 
+                                            src={readerContext.data.imageUrl} 
+                                            className="w-full h-full object-cover" 
+                                            alt={readerContext.data.name} 
+                                        />
                                     </div>
                                 </div>
                             )}
+
                             {loadingPsalm ? 
                                 <div className="flex justify-center py-20"><Loader2 className="animate-spin text-slate-400" /></div> : 
                                 psalmText && (
@@ -627,6 +639,8 @@
                                 )
                             }
                         </main>
+                        
+                        {/* BOTTOM ACTION BAR */}
                         <div className="sticky bottom-0 bg-white border-t p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
                             <div className="max-w-md mx-auto">
                                 {readerContext.type === 'child' && (
@@ -664,6 +678,7 @@
 
                     <div className="bg-white shadow-sm sticky top-0 z-10">
                         <div className="bg-slate-50 py-1 px-4 flex justify-between items-center text-[11px] border-b">
+                            {/* HEBREW DATE & STREAK */}
                             <div className="flex items-center gap-3">
                                 <p className="text-slate-600 font-serif font-bold text-lg leading-none pt-1">{todayHebrew}</p>
                                 <div className={`flex items-center gap-1 font-bold ${streakToday ? 'fire-active fire-animate' : 'text-slate-300'}`}>
