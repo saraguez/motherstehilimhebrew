@@ -68,7 +68,7 @@
             writeBatch,
             getDocs
         } from 'firebase/firestore';
-        import { HDate, gematriya } from '@hebcal/core';
+        import { HDate } from '@hebcal/core';
 
         // --- EMPTY INITIAL DATA (Generic) ---
         const INITIAL_DATA = [];
@@ -377,21 +377,18 @@
             };
 
             // NEW: Mark Daily Chapter
-            const markDailyAsDone = async (chapterNum) => {
+            const toggleDailyDone = async (chapterNum) => {
                 if (!user) return;
                 const todayStr = new Date().toDateString();
                 const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
-                const newDailyIds = [...completedDailyIds, chapterNum];
-                setCompletedDailyIds(newDailyIds);
-                await setDoc(completedRef, { dailyIds: newDailyIds }, { merge: true });
-            };
-            
-            // NEW: Unmark Daily Chapter
-            const unmarkDailyAsDone = async (chapterNum) => {
-                if (!user) return;
-                const todayStr = new Date().toDateString();
-                const completedRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completed', todayStr);
-                const newDailyIds = completedDailyIds.filter(id => id !== chapterNum);
+                
+                let newDailyIds;
+                if (completedDailyIds.includes(chapterNum)) {
+                    newDailyIds = completedDailyIds.filter(id => id !== chapterNum);
+                } else {
+                    newDailyIds = [...completedDailyIds, chapterNum];
+                }
+                
                 setCompletedDailyIds(newDailyIds);
                 await setDoc(completedRef, { dailyIds: newDailyIds }, { merge: true });
             };
@@ -561,7 +558,7 @@
                                     </button>
                                 )}
                                 {readerContext.type === 'chapter' && (
-                                    <button onClick={() => { markDailyAsDone(readerContext.chapter); setView('list'); }} className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all">
+                                    <button onClick={() => { toggleDailyDone(readerContext.chapter); setView('list'); }} className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all">
                                         <CheckCircle size={24} /> סיימתי פרק זה
                                     </button>
                                 )}
@@ -726,17 +723,21 @@
                                             {getDailyChapters().map(ch => {
                                                 const isDailyDone = completedDailyIds.includes(ch);
                                                 return (
-                                                    <div key={ch} className="flex gap-2">
+                                                    <div key={ch} className={`flex gap-0 border rounded-xl overflow-hidden transition-all ${isDailyDone ? 'bg-green-50 border-green-200' : 'bg-white border-slate-200'}`}>
                                                         <button 
                                                             onClick={() => openReader({ type: 'chapter', id: ch, chapter: ch })}
-                                                            className={`flex-1 border p-4 rounded-xl flex items-center justify-between transition-colors ${isDailyDone ? 'bg-green-50 border-green-200' : 'bg-white border-slate-200 hover:bg-slate-50'}`}
+                                                            className="flex-1 p-4 flex items-center justify-between hover:bg-black/5"
                                                         >
                                                             <span className={`font-bold ${isDailyDone ? 'text-green-800' : 'text-slate-700'}`}>פרק {ch}</span>
-                                                            <div className="flex items-center gap-2">
-                                                                {isDailyDone ? <span className="text-xs font-bold text-green-600 flex items-center gap-1"><Check size={14} /> נקרא</span> : <BookOpen size={16} className="text-slate-400" />}
-                                                            </div>
                                                         </button>
-                                                        {isDailyDone && <button onClick={() => unmarkDailyAsDone(ch)} className="px-3 bg-red-50 text-red-500 rounded-xl border border-red-100" title="בטל סימון"><Undo size={16} /></button>}
+                                                        
+                                                        {/* DIRECT TOGGLE BUTTON ON THE LIST */}
+                                                        <button 
+                                                            onClick={() => toggleDailyDone(ch)} 
+                                                            className={`w-16 flex items-center justify-center border-r ${isDailyDone ? 'bg-green-100 text-green-600 border-green-200' : 'bg-slate-50 text-slate-300 border-slate-200 hover:bg-slate-100 hover:text-slate-400'}`}
+                                                        >
+                                                            {isDailyDone ? <CheckCircle size={24} className="fill-green-100" /> : <div className="w-6 h-6 rounded-full border-2 border-slate-300"></div>}
+                                                        </button>
                                                     </div>
                                                 );
                                             })}
