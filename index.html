@@ -107,7 +107,8 @@
             const [loadingPsalm, setLoadingPsalm] = useState(false);
             const [scrollToId, setScrollToId] = useState(null);
             const [editingId, setEditingId] = useState(null);
-            const [formData, setFormData] = useState({ name: '', hebrewDate: '', birthDate: '', gender: 'girl', imageUrl: '' });
+            // ADDED: kavana field to state
+            const [formData, setFormData] = useState({ name: '', hebrewDate: '', birthDate: '', gender: 'girl', imageUrl: '', kavana: '' });
             const [dateInputMode, setDateInputMode] = useState('gregorian'); 
             const [hebrewDateParts, setHebrewDateParts] = useState({ day: 1, month: 7, year: 5785 });
             const fileInputRef = useRef(null);
@@ -261,10 +262,8 @@
             const handleGoogleLogin = async () => { try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (error) { alert("שגיאה: " + error.message); } };
             const handleLogout = async () => { if (window.confirm("האם להתנתק מהמערכת?")) { await signOut(auth); setActiveTab('children'); setView('list'); } };
 
-            // --- FIXED CLEAN TEXT FUNCTION (Keeps brackets) ---
             const cleanText = (text, isHebrew = false) => {
                 if (!text) return "";
-                // REMOVED THE BRACKET DELETION REGEX
                 let cleaned = text.replace(/<[^>]+>/g, '').replace(/&[a-z0-9#]+;/gi, '').replace(/\{[^}]+\}/g, '').replace(/׀/g, '').trim();
                 if (isHebrew) cleaned = cleaned.replace(/[a-zA-Z]/g, '');
                 return cleaned;
@@ -371,7 +370,7 @@
                 try {
                     if (editingId) await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'children', editingId), formData);
                     else { const docRef = await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'children'), formData); targetId = docRef.id; }
-                    setEditingId(null); setFormData({ name: '', hebrewDate: '', birthDate: '', gender: 'girl', imageUrl: '' });
+                    setEditingId(null); setFormData({ name: '', hebrewDate: '', birthDate: '', gender: 'girl', imageUrl: '', kavana: '' });
                     setView('list'); setScrollToId(`child-${targetId}`);
                 } catch (error) { alert("שגיאה בשמירה: " + error.message); }
             };
@@ -402,7 +401,8 @@
             };
 
             const startEdit = (child) => {
-                setFormData(child);
+                // MODIFIED: Ensure kavana exists
+                setFormData({ ...child, kavana: child.kavana || '' });
                 setEditingId(child.id);
                 if (child.birthDate) {
                     const hDate = new HDate(new Date(child.birthDate));
@@ -414,6 +414,7 @@
 
             if (loadingAuth) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-slate-400" /></div>;
             if (isExporting) return <div className="min-h-screen flex items-center justify-center bg-black/80 fixed inset-0 z-[100] text-white flex-col gap-4"><Loader2 className="animate-spin" size={48} /><div className="text-center"><p className="text-xl font-bold">מכין את המסמך...</p></div></div>;
+            
             if (!user) return <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4"><div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100 max-w-sm w-full text-center"><h1 className="text-2xl font-bold text-slate-800 font-serif mb-2">אל הנער הזה התפללתי</h1><p className="text-slate-500 mb-8 font-medium">תהילים יומי למשפחה</p><button onClick={handleGoogleLogin} className="w-full bg-blue-600 text-white px-4 py-3 rounded-xl font-medium flex items-center justify-center gap-2 shadow-sm shadow-blue-200"><LogIn size={20} /> התחברות עם Google</button></div></div>;
 
             if (view === 'reader' && readerContext) {
@@ -424,7 +425,16 @@
                             <div className="text-center"><span className="text-xs font-bold text-blue-600 uppercase">פרק {readerContext.chapter}</span><p className="text-sm font-semibold truncate max-w-[200px]">{readerContext.type === 'child' ? readerContext.data.name : 'קריאה'}</p></div><div className="w-8"></div>
                         </header>
                         <main className="flex-1 p-6 max-w-2xl mx-auto w-full">
-                            {readerContext.type === 'child' && readerContext.data.imageUrl && <div className="flex justify-center mb-6"><div className="w-40 h-40 rounded-full border-4 border-slate-100 shadow-md overflow-hidden bg-slate-50"><img src={readerContext.data.imageUrl} className="w-full h-full object-cover" alt={readerContext.data.name} /></div></div>}
+                            {/* ADDED: Kavana display */}
+                            {readerContext.type === 'child' && readerContext.data.imageUrl && (
+                                <div className="flex flex-col items-center mb-6">
+                                    <div className="w-40 h-40 rounded-full border-4 border-slate-100 shadow-md overflow-hidden bg-slate-50">
+                                        <img src={readerContext.data.imageUrl} className="w-full h-full object-cover" alt={readerContext.data.name} />
+                                    </div>
+                                    {readerContext.data.kavana && <p className="text-center text-slate-600 font-serif font-medium italic mt-3 px-4 text-lg">"{readerContext.data.kavana}"</p>}
+                                </div>
+                            )}
+
                             {loadingPsalm ? <div className="flex justify-center py-20"><Loader2 className="animate-spin text-slate-400" /></div> : psalmText && <div className="pb-24"><div className="text-justify font-serif text-3xl leading-loose text-slate-900 mb-8">{psalmText.he.map((v, i) => <span key={i}>{cleanText(v, true)} <span className="text-sm text-slate-400 mx-1 align-top">({i+1})</span></span>)}</div></div>}
                         </main>
                         <div className="sticky bottom-0 bg-white border-t p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
@@ -462,10 +472,14 @@
                                             {formData.imageUrl && <button type="button" onClick={() => setFormData({...formData, imageUrl: ''})} className="text-xs text-red-500">מחק תמונה</button>}
                                         </div>
                                         <input required className="w-full p-3 bg-slate-50 border rounded-lg text-sm" placeholder="שם מלא" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                                        
+                                        {/* ADDED: Kavana Input */}
+                                        <textarea className="w-full p-3 bg-slate-50 border rounded-lg text-sm" placeholder="כוונה מיוחדת (אופציונלי)" rows="2" value={formData.kavana} onChange={e => setFormData({...formData, kavana: e.target.value})} />
+
                                         <select className="w-full p-3 bg-slate-50 border rounded-lg text-sm" value={formData.gender} onChange={e => setFormData({...formData, gender: e.target.value})}><option value="girl">בת ❤️</option><option value="boy">בן 💙</option></select>
                                         <div className="bg-slate-50 rounded-lg p-1 flex text-sm"><button type="button" onClick={() => setDateInputMode('gregorian')} className={`flex-1 py-2 rounded-md transition-all ${dateInputMode === 'gregorian' ? 'bg-white shadow-sm text-blue-600 font-bold' : 'text-slate-500'}`}>תאריך לועזי</button><button type="button" onClick={() => setDateInputMode('hebrew')} className={`flex-1 py-2 rounded-md transition-all ${dateInputMode === 'hebrew' ? 'bg-white shadow-sm text-blue-600 font-bold' : 'text-slate-500'}`}>תאריך עברי</button></div>
                                         {dateInputMode === 'gregorian' ? <div className="space-y-2"><label className="text-xs text-slate-500 font-bold uppercase">תאריך לידה</label><input required type="date" className="w-full p-3 bg-white border rounded-lg text-sm" value={formData.birthDate} onChange={handleGregorianChange} /><div className="text-xs text-slate-400">תאריך עברי מחושב: {formData.hebrewDate || '...'}</div></div> : <div className="space-y-2"><label className="text-xs text-slate-500 font-bold uppercase">תאריך עברי</label><div className="grid grid-cols-3 gap-2"><select className="p-3 bg-white border rounded-lg text-sm" value={hebrewDateParts.day} onChange={e => handleHebrewPartsChange('day', e.target.value)}>{Array.from({length: 30}, (_, i) => i + 1).map(d => <option key={d} value={d}>{d}</option>)}</select><select className="p-3 bg-white border rounded-lg text-sm" value={hebrewDateParts.month} onChange={e => handleHebrewPartsChange('month', e.target.value)}>{HEBREW_MONTHS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}</select><select className="p-3 bg-white border rounded-lg text-sm" value={hebrewDateParts.year} onChange={e => handleHebrewPartsChange('year', e.target.value)}>{Array.from({length: 100}, (_, i) => new HDate().getFullYear() - i).map(y => <option key={y} value={y}>{y}</option>)}</select></div><div className="text-xs text-slate-400">תאריך לועזי: {formData.birthDate || '...'}</div></div>}
-                                        <div className="flex gap-2 mt-4">{editingId && <button type="button" onClick={() => {setEditingId(null); setFormData({name:'',hebrewDate:'',birthDate:'',gender:'girl', imageUrl: ''})}} className="flex-1 py-3 border rounded-lg text-slate-600 font-medium">ביטול</button>}<button type="submit" className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-bold shadow-md shadow-blue-100 flex items-center justify-center gap-2"><Save size={18} /> {editingId ? 'עדכן' : 'שמור'}</button></div>
+                                        <div className="flex gap-2 mt-4">{editingId && <button type="button" onClick={() => {setEditingId(null); setFormData({name:'',hebrewDate:'',birthDate:'',gender:'girl', imageUrl: '', kavana: ''})}} className="flex-1 py-3 border rounded-lg text-slate-600 font-medium">ביטול</button>}<button type="submit" className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-bold shadow-md shadow-blue-100 flex items-center justify-center gap-2"><Save size={18} /> {editingId ? 'עדכן' : 'שמור'}</button></div>
                                     </form>
                                 </div>
                                 <div className="bg-white p-5 rounded-xl border shadow-sm space-y-4"><h2 className="font-bold text-slate-800 flex items-center gap-2"><Settings size={18} /> ניהול</h2><div className="grid grid-cols-1 gap-3"><button onClick={handleExportPDF} className="w-full py-3 bg-slate-800 text-white text-sm font-bold border rounded-xl flex items-center justify-center gap-2 shadow-sm"><Printer size={16} /> ייצוא ל-PDF</button><div className="h-px bg-slate-100 my-2"></div><button type="button" onClick={restoreDefaults} className="w-full py-3 bg-red-50 text-red-600 text-sm font-bold border border-red-100 rounded-xl flex items-center justify-center gap-2"><RefreshCw size={16} /> איפוס רשימה</button><div className="pt-2"><input type="file" id="backup-upload" className="hidden" accept=".json" onChange={handleRestoreBackup} /><button onClick={() => document.getElementById('backup-upload').click()} className="w-full py-3 bg-slate-100 text-slate-600 text-sm font-bold border rounded-xl flex items-center justify-center gap-2"><Upload size={16} /> שחזור מגיבוי</button></div></div></div>
